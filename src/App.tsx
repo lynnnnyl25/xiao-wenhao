@@ -95,9 +95,10 @@ export default function App() {
     const stuck = isStuck(text)
 
     // 1) 诊断这一轮学生的话
+    //    费曼阶段学生是在"讲解"而非"作答"，判定交给费曼同桌，不走诊断器
     let understood = s.understoodLevel
     let incoming: { type: string; evidence: string; confidence: number }[] = []
-    if (!stuck) {
+    if (!stuck && s.phase === 'socratic') {
       try {
         const raw = await callJson({
           apiKey,
@@ -117,7 +118,7 @@ export default function App() {
         // 诊断失败不阻断流程，按"没诊断出缺口"处理
         if (e instanceof DeepSeekError && e.kind !== 'abort') console.warn('诊断失败', e.message)
       }
-    } else {
+    } else if (stuck && s.phase === 'socratic') {
       understood = Math.max(0, s.understoodLevel - 0.1)
     }
 
@@ -176,10 +177,48 @@ export default function App() {
         const raw = await callStream({ apiKey, model, messages, signal: ctrl.signal }, (c) =>
           streamer.push(c),
         )
-        const parsed = parseSocratic(raw)
-        const say = phase === 'feynman' ? parseFeynman(raw).say : parsed.say
+        // 费曼阶段走独立评审，苏格拉底阶段走追问引擎
+        let say: string
+        let feynmanPassed = false
+        let feynmanMissing: string[] = []
+        let feynmanStuck = ''
+
+        if (phase === 'feynman') {
+          const f = parseFeynman(raw)
+          say = f.say
+          feynmanPassed = f.passed
+          feynmanMissing = f.missing
+          feynmanStuck = f.stuck_at
+        } else {
+          say = parseSocratic(raw).say
+        }
 
         next = recordAiTurn(next, say, level)
+
+        // 费曼环节：递增轮次 / 记录同桌卡住处 / 通过后收尾
+        if (phase === 'feynman') {
+          next = { ...next, feynmanRound: next.feynmanRound + 1 }
+          if (feynmanStuck) {
+            // 讲不清的地方作为新缺口回流到图谱，这是费曼技巧第 3 步"回到材料"
+            next = {
+              ...next,
+              gaps: mergeGaps(next, [
+                { type: feynmanMissing[0] ?? 'def', evidence: feynmanStuck, confidence: 0.8 },
+              ]),
+            }
+          }
+          if (feynmanPassed) {
+            // 同桌听懂 = 本次讲解覆盖到的缺口全部闭合
+            next = {
+              ...next,
+              phase: 'done',
+              gaps: closeGaps(
+                next,
+                next.gaps.filter((g) => !g.resolved).map((g) => g.type),
+              ),
+            }
+          }
+        }
         setSession(next)
       } catch (e) {
         const msg =
@@ -321,7 +360,12 @@ export default function App() {
                 className={`px-3 py-1.5 rounded-[14px] text-xs font-bold ${
                   mode === 'demo' ? 'bg-kid-primary text-white' : 'text-kid-mute'
                 }`}
-                onClick={() => setMode('demo')}
+                onClick={() => {
+                  setMode('demo')
+                  setSession(createSession(demo.concept))
+                  setDemoStep(0)
+                  setDemoPlaying(false)
+                }}
               >
                 体验模式
               </button>
@@ -329,7 +373,13 @@ export default function App() {
                 className={`px-3 py-1.5 rounded-[14px] text-xs font-bold ${
                   mode === 'live' ? 'bg-kid-primary text-white' : 'text-kid-mute'
                 }`}
-                onClick={() => setMode('live')}
+                onClick={() => {
+                  setMode('live')
+                  // 切模式清空上一次会话，避免回放内容串到真模型里
+                  setSession(createSession(concept))
+                  setStreaming('')
+                  setErr('')
+                }}
               >
                 真模型
               </button>
