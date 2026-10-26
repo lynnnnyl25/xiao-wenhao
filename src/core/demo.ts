@@ -1,0 +1,295 @@
+/**
+ * 体验模式：离线回放脚本
+ * ---------------------------------------------------------------
+ * 评委/教师打开链接就能看到完整效果，不需要 API Key、不依赖网络模型。
+ * 每条脚本都是一次真实的 G-Loop 演示：提问 → 学生答 → 暴露缺口 → 追问 → 费曼 → 闭合。
+ *
+ * 这些数据同时也是"离线回放基准"的种子集：护栏指标可以直接在它们上面跑。
+ */
+
+import type { GapTypeId } from './prompts.ts'
+import type { Phase } from './engine.ts'
+
+export type DemoStep = {
+  /** AI 说的话 */
+  ai: string
+  /** 层级（苏格拉底阶段才有） */
+  level?: number
+  /** 这一步针对的缺口类型 */
+  target?: GapTypeId | string
+  /** 学生可能的回答（回放时自动播放） */
+  student: string
+  /** 这一步会诊断出的缺口 */
+  gaps?: { type: GapTypeId | string; evidence: string; confidence: number }[]
+  /** 这一步闭合的缺口类型 */
+  closes?: (GapTypeId | string)[]
+  /** 这一步之后学生的理解度 0-1 */
+  understood?: number
+  phase: Phase
+  /** 给评委看的旁白，说明这一步在做什么 */
+  note: string
+}
+
+export type DemoScript = {
+  id: string
+  concept: string
+  emoji: string
+  grade: string
+  blurb: string
+  steps: DemoStep[]
+}
+
+export const DEMO_SCRIPTS: DemoScript[] = [
+  {
+    id: 'variable',
+    concept: '变量（贴了名字的盒子）',
+    emoji: '📦',
+    grade: '5 年级 · 算法与程序',
+    blurb: '看起来会做，一问"为什么"就说不清 —— 典型的假性掌握',
+    steps: [
+      {
+        ai: '你玩过那种带格子的收纳盒吗？如果我把一个苹果放进去，我怎么才能一眼找到它？',
+        level: 1,
+        student: '在上面贴个标签写"苹果"。',
+        understood: 0.25,
+        phase: 'socratic',
+        note: 'L1 唤起经验：从生活里的"贴标签"切入，不提"变量"两个字',
+      },
+      {
+        ai: '贴标签这个办法真好。那你觉得，电脑是怎么"记住"一个数字的？',
+        level: 1,
+        student: '电脑里面有内存，就记住了。',
+        gaps: [{ type: 'jargon', evidence: '电脑里面有内存，就记住了', confidence: 0.75 }],
+        understood: 0.3,
+        phase: 'socratic',
+        note: '学生用"内存"这个自己也没解释过的词 —— 术语依赖缺口暴露',
+      },
+      {
+        ai: '你说到"内存"这个词。你能不能用你自己的话说说，它到底是个什么东西？',
+        level: 2,
+        target: 'jargon',
+        student: '就是……电脑里面放东西的地方吧。',
+        gaps: [{ type: 'def', evidence: '就是……电脑里面放东西的地方吧', confidence: 0.8 }],
+        understood: 0.35,
+        phase: 'socratic',
+        note: 'L2 概念澄清：逼他把术语翻译成自己的话，结果含糊 —— 定义缺失',
+      },
+      {
+        ai: '好，那我们打个比方：内存就像一排贴了名字的小盒子。我把 5 放进叫 a 的盒子，再把 3 放进去，现在 a 里面是几？',
+        level: 4,
+        target: 'def',
+        student: '是 8！因为 5 加 3 等于 8。',
+        gaps: [{ type: 'mech', evidence: '是 8！因为 5 加 3 等于 8', confidence: 0.85 }],
+        understood: 0.4,
+        phase: 'socratic',
+        note: 'L4 类比迁移：经典误区浮出水面 —— 他把"放进去"当成了"加上去"',
+      },
+      {
+        ai: '有意思。那我们再试一次：盒子里先放着 5，我现在"放进去"一个 3 —— 注意，是放进去，不是倒进去。你觉得盒子会变成什么样？',
+        level: 5,
+        target: 'mech',
+        student: '哦……那应该是 3 吧？因为新的把旧的挤掉了。',
+        understood: 0.7,
+        closes: ['mech', 'jargon'],
+        phase: 'socratic',
+        note: 'L5 追问原因：只给"放进去"这个动作线索，他自己想通了覆盖机制 —— 缺口闭合',
+      },
+      {
+        ai: '你说对了！那我考考你：两个盒子能都叫同一个名字吗？为什么？',
+        level: 5,
+        student: '不能，因为叫同一个名字就分不清哪个是哪个了。',
+        understood: 0.82,
+        phase: 'socratic',
+        note: '登一级台阶再确认，他已经能自己推理了 —— 进入费曼环节',
+      },
+      {
+        ai: '太好了。现在换你当小老师：我是个从没听过"变量"的同桌，你讲给我听，要让我也能算出来。',
+        phase: 'feynman',
+        student: '变量就是一个盒子，你给它起个名字，比如叫 a。你把数字放进去，下次放新的，旧的就没了。所以你问 a 是多少，就是问现在盒子里是什么。',
+        understood: 0.9,
+        closes: ['def'],
+        note: '费曼第 1 次讲解：有生活类比 + 无术语依赖 + 说清了覆盖机制',
+      },
+      {
+        ai: '哦——我懂了！你用盒子打比方，我一下就想明白了。那要是盒子里放的不是数字，是一句话呢？',
+        phase: 'feynman',
+        student: '也行啊，盒子里放什么都行，只要是电脑能存的东西。',
+        understood: 0.95,
+        note: '同桌追问通过 —— 费曼讲解判定通过，学习完成',
+      },
+      {
+        ai: '厉害！你今天自己想明白了"变量"是什么，还教会了我。',
+        phase: 'done',
+        student: '',
+        understood: 1,
+        note: '生成学习护照',
+      },
+    ],
+  },
+  {
+    id: 'password',
+    concept: '什么样的密码才安全',
+    emoji: '🔐',
+    grade: '3-4 年级 · 网络与安全',
+    blurb: '学生背下了规则，却说不出规则背后的道理',
+    steps: [
+      {
+        ai: '你的游戏账号要设密码。妈妈让你设"难一点"的，你觉得什么样的密码算难？',
+        level: 1,
+        student: '要长一点，还要有数字和字母。',
+        gaps: [{ type: 'mech', evidence: '要长一点，还要有数字和字母', confidence: 0.7 }],
+        understood: 0.4,
+        phase: 'socratic',
+        note: '背出了规则，但这是记忆不是理解 —— 机制不清',
+      },
+      {
+        ai: '这是老师教的规则。可是你想过没有：为什么要加数字呢？',
+        level: 5,
+        target: 'mech',
+        student: '因为……加了就更难猜？',
+        understood: 0.45,
+        phase: 'socratic',
+        note: 'L5 追问原因：他的"因为"其实只是把问题重复了一遍',
+      },
+      {
+        ai: '我们来玩个游戏。如果你的密码是 6 位，每一位只能是数字（0-9），那我瞎猜，最多要猜多少次？',
+        level: 3,
+        target: 'mech',
+        student: '一百万次！',
+        understood: 0.6,
+        phase: 'socratic',
+        note: 'L3 举例：把"为什么"换成一个能算出来的具体问题',
+      },
+      {
+        ai: '对，正好一百万次。那如果每一位可以是数字也可以是字母，猜的次数会变多还是变少？',
+        level: 5,
+        student: '变多！因为每一位能选的东西变多了。',
+        understood: 0.78,
+        closes: ['mech'],
+        phase: 'socratic',
+        note: '他自己说出了"选择变多"这个机制 —— 缺口闭合',
+      },
+      {
+        ai: '那我再加一句：密码里加上你的生日，会更安全还是更不安全？',
+        level: 3,
+        target: 'edge',
+        student: '更安全吧，因为更长了……',
+        gaps: [{ type: 'edge', evidence: '更安全吧，因为更长了', confidence: 0.8 }],
+        understood: 0.7,
+        phase: 'socratic',
+        note: '反向追问暴露新缺口：只知道"长就好"，不知道规则什么时候失灵 —— 边界模糊',
+      },
+      {
+        ai: '可是你的生日，是不是随便一个同学都知道？那这个"更长"的密码，对谁来说其实更好猜？',
+        level: 5,
+        target: 'edge',
+        student: '对认识我的人来说更好猜！因为大家都知我生日。',
+        understood: 0.88,
+        closes: ['edge'],
+        phase: 'socratic',
+        note: '把"认识你的人"这个变量引进来，他自己发现了边界 —— 闭合',
+      },
+      {
+        ai: '轮到你当小老师了。我是你同桌，我密码设的是 abc123，你讲给我听为什么不行。',
+        phase: 'feynman',
+        student: '因为太短了，而且 abc123 是最多人用的，坏人和电脑一下就试出来了。密码要长，还要用别人不知道的东西，不能用生日，因为同学都知道。',
+        understood: 0.92,
+        note: '费曼讲解：说清了机制 + 指出了边界，通过',
+      },
+      {
+        ai: '哦——我懂了！我这就去把 abc123 换掉。',
+        phase: 'done',
+        student: '',
+        understood: 1,
+        note: '学习护照生成',
+      },
+    ],
+  },
+  {
+    id: 'binary',
+    concept: '电脑为什么只认 0 和 1',
+    emoji: '💡',
+    grade: '5-6 年级 · 数据与编码',
+    blurb: '把"先后"当成"因果"，是小学生最常见的推理错误',
+    steps: [
+      {
+        ai: '你知道电脑里面是怎么表示数字的吗？',
+        level: 1,
+        student: '用 0 和 1。',
+        gaps: [{ type: 'def', evidence: '用 0 和 1', confidence: 0.6 }],
+        understood: 0.3,
+        phase: 'socratic',
+        note: '一句话答案，没有解释 —— 定义缺失',
+      },
+      {
+        ai: '对，是 0 和 1。那你想过没有：为什么偏偏是 0 和 1，不是 0、1、2？',
+        level: 5,
+        target: 'def',
+        student: '因为电脑是先发明 0 和 1 的，后来才有的别的。',
+        gaps: [{ type: 'causal', evidence: '因为电脑是先发明 0 和 1 的，后来才有的别的', confidence: 0.85 }],
+        understood: 0.35,
+        phase: 'socratic',
+        note: '把时间先后当成原因 —— 因果想当然',
+      },
+      {
+        ai: '我们换个东西想：你房间的电灯开关，它有几种状态？',
+        level: 4,
+        target: 'causal',
+        student: '两种，开和关。',
+        understood: 0.5,
+        phase: 'socratic',
+        note: 'L4 类比迁移：用开关这种"只有两态"的东西做桥',
+      },
+      {
+        ai: '对！那如果电脑里面有好多好多这样的小开关，每个只有"开"和"关"，我们把"关"记作 0、"开"记作 1 —— 现在你觉得，为什么是 0 和 1 了？',
+        level: 4,
+        target: 'causal',
+        student: '因为开关只有两种状态，所以只能记两个数！',
+        understood: 0.8,
+        closes: ['causal', 'def'],
+        phase: 'socratic',
+        note: '他自己把"开关只有两态"推到了"只能记两个数" —— 因果缺口闭合',
+      },
+      {
+        ai: '那问题来了：只有两个状态，怎么表示 5 这么大的数？',
+        level: 3,
+        target: 'mech',
+        student: '用好多开关？比如第一个是 4，第二个是 1，加起来就是 5。',
+        understood: 0.88,
+        closes: ['mech'],
+        phase: 'socratic',
+        note: '他自己摸到了二进制位权的边 —— 机制理解建立',
+      },
+      {
+        ai: '厉害。现在我是没学过这些的同桌，你讲给我听：为什么电脑不直接记 5，非要记一堆 0 和 1？',
+        phase: 'feynman',
+        student: '因为电脑里面全是小开关，开关只有开和关两种，就像电灯。所以它只能记两个数，0 和 1。要记大的数，就多用几个开关，像搭积木一样搭出来。',
+        understood: 0.93,
+        note: '费曼讲解：开关类比 + 积木类比，无术语，通过',
+      },
+      {
+        ai: '哦——我懂了！就像我家的灯，要么亮要么不亮，没有中间。',
+        phase: 'done',
+        student: '',
+        understood: 1,
+        note: '学习护照生成',
+      },
+    ],
+  },
+]
+
+/** 取一条脚本，转成可以直接喂给 UI 的回放序列 */
+export function flattenScript(script: DemoScript) {
+  return script.steps.map((s, i) => ({
+    index: i,
+    ai: s.ai,
+    student: s.student,
+    level: s.level,
+    target: s.target,
+    gaps: s.gaps ?? [],
+    closes: s.closes ?? [],
+    understood: s.understood ?? 0.5,
+    phase: s.phase,
+    note: s.note,
+  }))
+}
