@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import GapMap from './components/GapMap'
 import Passport from './components/Passport'
 import Settings from './components/Settings'
+import Review from './components/Review'
 import {
   buildDiagnoserMessages,
   buildFeynmanMessages,
@@ -21,7 +22,7 @@ import {
   buildProfile,
   closeGaps,
   createSession,
-  isStuck,
+  getPack,
   mergeGaps,
   nextLevel,
   recordAiTurn,
@@ -30,6 +31,14 @@ import {
   type SessionState,
   type Turn,
 } from './core/engine'
+import {
+  classifyAnswer,
+  decideMove,
+  pickScaffold,
+  type Classification,
+} from './core/socratic'
+import { evaluateFeynman, nextLoopStep, type FeynmanResult } from './core/feynman'
+import { pickLadder } from './core/concepts'
 import { DEMO_SCRIPTS, flattenScript } from './core/demo'
 
 type Mode = 'live' | 'demo'
@@ -58,6 +67,7 @@ export default function App() {
   const [streaming, setStreaming] = useState('')
   const [err, setErr] = useState('')
   const [showPassport, setShowPassport] = useState(false)
+  const [showReview, setShowReview] = useState(false)
 
   // ---------------------------------------------------------------- 体验模式
   const [demoId, setDemoId] = useState(DEMO_SCRIPTS[0].id)
@@ -91,124 +101,172 @@ export default function App() {
     setErr('')
     setInput('')
 
-    let s = recordStudentTurn(session, text)
-    const stuck = isStuck(text)
+    const pack = getPack(session)
 
-    // 1) 诊断这一轮学生的话
-    //    费曼阶段学生是在"讲解"而非"作答"，判定交给费曼同桌，不走诊断器
+    // ① 规则层先给回答分类 —— 不依赖模型，稳定可复现
+    const cls = classifyAnswer(text, pack)
+    let s = recordStudentTurn(session, text, cls.kind)
+
     let understood = s.understoodLevel
     let incoming: { type: string; evidence: string; confidence: number }[] = []
-    if (!stuck && s.phase === 'socratic') {
-      try {
-        const raw = await callJson({
-          apiKey,
-          model,
-          messages: buildDiagnoserMessages({
-            concept: s.concept,
-            question: lastAiText(s) ?? '',
-            answer: text,
-          }),
-          json: true,
-          temperature: 0.2,
-        })
-        const d = parseDiagnosis(raw)
-        incoming = d.gaps
-        understood = d.understood_level
-      } catch (e) {
-        // 诊断失败不阻断流程，按"没诊断出缺口"处理
-        if (e instanceof DeepSeekError && e.kind !== 'abort') console.warn('诊断失败', e.message)
+
+    if (s.phase === 'socratic') {
+      // 规则层已能判定的缺口，先记账（快、稳、不花钱）
+      if (cls.kind === 'misconception' && pack) {
+        const mis = pack.misconceptions.find((m) => m.id === cls.misconception)
+        if (mis) {
+          incoming.push({
+            type: mis.gapType,
+            evidence: text.slice(0, 40),
+            confidence: 0.85,
+          })
+        }
       }
-    } else if (stuck && s.phase === 'socratic') {
-      understood = Math.max(0, s.understoodLevel - 0.1)
+      if (cls.kind === 'jargon') {
+        incoming.push({ type: 'jargon', evidence: text.slice(0, 40), confidence: 0.8 })
+      }
+
+      // 理解度：以必答项覆盖度为准绳，而不是模型的印象分
+      understood = Math.max(cls.coverage, understood * 0.6)
+
+      // 再用模型做一次补充诊断（规则层看不出的细微问题）
+      if (cls.kind !== 'unknown' && cls.kind !== 'misconception') {
+        try {
+          const raw = await callJson({
+            apiKey,
+            model,
+            messages: buildDiagnoserMessages({
+              concept: s.concept,
+              question: lastAiText(s) ?? '',
+              answer: text,
+            }),
+            json: true,
+            temperature: 0.2,
+          })
+          const d = parseDiagnosis(raw)
+          // 模型报的缺口只作为补充，且最多 1 条，避免与规则层重复记账
+          incoming = [...incoming, ...d.gaps.slice(0, 1)]
+          understood = Math.max(understood, Math.min(d.understood_level, cls.coverage + 0.2))
+        } catch (e) {
+          if (e instanceof DeepSeekError && e.kind !== 'abort') {
+            console.warn('补充诊断失败，仅用规则层判定', e.message)
+          }
+        }
+      }
     }
 
     s = {
       ...s,
       gaps: mergeGaps(s, incoming),
-      understoodLevel: understood,
-      consecutiveStuck: stuck ? s.consecutiveStuck + 1 : 0,
+      understoodLevel: Math.min(1, understood),
+      consecutiveStuck:
+        cls.kind === 'unknown' ? s.consecutiveStuck + 1 : 0,
     }
 
-    // 2) 费曼阶段的判定交给费曼评审，苏格拉底阶段继续追问
     setSession(s)
-    await speak(s, stuck)
+    await speak(s, cls)
   }, [apiKey, busy, input, model, session])
 
   /** 让 AI 说下一句 */
   const speak = useCallback(
-    async (s: SessionState, stuck: boolean) => {
+    async (s: SessionState, cls: Classification) => {
+      const pack = getPack(s)
       const enteringFeynman = s.phase === 'socratic' && shouldEnterFeynman(s)
       const phase = enteringFeynman ? 'feynman' : s.phase
 
       let next: SessionState = { ...s, phase }
       if (enteringFeynman) next = { ...next, feynmanRound: 0 }
 
-      // 费曼阶段：学生对 AI 的讲解由独立评审处理；这里 AI 先开口邀请
-      const level = nextLevel(next, next.understoodLevel, stuck)
+      const level = nextLevel(next, next.understoodLevel, cls.kind === 'unknown')
+
+      // ② 规则层决定这一轮该用哪种提问动作
+      const plan = decideMove(cls, pack, {
+        level: next.level,
+        consecutiveUnknown: next.consecutiveStuck,
+        askedMoves: next.usedMoves,
+      })
 
       setBusy(true)
       setStreaming('')
       const ctrl = new AbortController()
       abortRef.current = ctrl
 
-      const messages =
+      // ③ 费曼环节先用规则层评分，再把结果喂给模型去"说话"
+      const feynmanR =
         phase === 'feynman' && next.feynmanRound > 0
+          ? evaluateFeynman(lastStudentText(next) ?? '', pack, next.feynmanRound)
+          : undefined
+
+      const ladderTip = pack && phase === 'socratic' ? pickLadder(pack, level) : undefined
+
+      const messages =
+        phase === 'feynman' && feynmanR
           ? buildFeynmanMessages({
               concept: next.concept,
               explanation: lastStudentText(next) ?? '',
               round: next.feynmanRound,
+              weakPoints: feynmanR.missing,
+              stuckAt: feynmanR.stuckAt,
+              suggestedProbe: feynmanR.nextProbe,
+              askedBefore: next.history
+                .filter((h) => h.role === 'ai' && h.phase === 'feynman')
+                .map((h) => h.text),
             })
           : buildSocraticMessages({
               concept: next.concept,
-              history: next.history.map((h) => ({
-                role: h.role,
-                text: h.text,
-                level: h.level,
-              })),
-              activeGaps: next.gaps.filter((g) => !g.resolved),
-              consecutiveStuck: next.consecutiveStuck,
-              currentLevel: next.level,
+              conceptBrief: pack?.coreIdea,
+              move: plan.move,
+              moveInstruction: plan.instruction,
+              targetGap: plan.targetGap,
+              ladderHint: ladderTip?.ask,
+              easierHint: ladderTip?.easier,
+              scaffold: pickScaffold(cls.kind),
+              history: next.history.map((h) => ({ role: h.role, text: h.text })),
+              lastQuestion: lastAiText(next) ?? undefined,
+              studentJustSaid: lastStudentText(next) ?? '',
             })
 
-      // 流式：把 say 字段增量推给 UI
       const streamer = makeSayStreamer((delta) => setStreaming((p) => p + delta))
 
       try {
         const raw = await callStream({ apiKey, model, messages, signal: ctrl.signal }, (c) =>
           streamer.push(c),
         )
-        // 费曼阶段走独立评审，苏格拉底阶段走追问引擎
-        let say: string
-        let feynmanPassed = false
-        let feynmanMissing: string[] = []
-        let feynmanStuck = ''
 
-        if (phase === 'feynman') {
+        let say: string
+        let feynmanOut: FeynmanResult | undefined
+
+        if (phase === 'feynman' && feynmanR) {
+          // 模型只负责措辞；"过没过"由规则层说了算，不让模型自己判
           const f = parseFeynman(raw)
-          say = f.say
-          feynmanPassed = f.passed
-          feynmanMissing = f.missing
-          feynmanStuck = f.stuck_at
+          say = f.say || feynmanR.say
+          feynmanOut = feynmanR
         } else {
           say = parseSocratic(raw).say
         }
 
-        next = recordAiTurn(next, say, level)
+        // ④ 审计这一轮提问（含诱导式检测），落在 history 上供 UI 展示
+        next = recordAiTurn(next, say, level, phase, {
+          move: plan.move,
+          feynman: feynmanOut,
+        })
 
-        // 费曼环节：递增轮次 / 记录同桌卡住处 / 通过后收尾
-        if (phase === 'feynman') {
+        if (phase === 'feynman' && feynmanR) {
           next = { ...next, feynmanRound: next.feynmanRound + 1 }
-          if (feynmanStuck) {
-            // 讲不清的地方作为新缺口回流到图谱，这是费曼技巧第 3 步"回到材料"
+
+          if (!feynmanR.passed && feynmanR.stuckAt) {
+            // 费曼第 3 步：讲不清就退回追问，把卡住处变成新缺口
             next = {
               ...next,
               gaps: mergeGaps(next, [
-                { type: feynmanMissing[0] ?? 'def', evidence: feynmanStuck, confidence: 0.8 },
+                { type: 'def', evidence: feynmanR.stuckAt, confidence: 0.8 },
               ]),
             }
           }
-          if (feynmanPassed) {
-            // 同桌听懂 = 本次讲解覆盖到的缺口全部闭合
+
+          const loop = nextLoopStep(next.feynmanRound, feynmanR.total, feynmanR.passed)
+
+          if (loop.action === 'pass') {
             next = {
               ...next,
               phase: 'done',
@@ -217,6 +275,9 @@ export default function App() {
                 next.gaps.filter((g) => !g.resolved).map((g) => g.type),
               ),
             }
+          } else if (loop.action === 'fallback') {
+            // 讲了 3 次还不通：不硬逼，退回追问补最弱的点
+            next = { ...next, phase: 'socratic', level: 2, feynmanRound: 0 }
           }
         }
         setSession(next)
@@ -256,7 +317,17 @@ export default function App() {
       const s = createSession(c)
       setSession(s)
       setErr('')
-      await speak(s, false)
+      // 开场：学生还没有任何回答，用"空白"分类触发第一问（L1 唤起经验）
+      const opening: Classification = {
+        kind: 'unknown',
+        hits: [],
+        missing: [],
+        coverage: 0,
+        jargon: [],
+        misconception: null,
+        reason: '开场，尚未作答',
+      }
+      await speak(s, opening)
     },
     [speak],
   )
@@ -284,7 +355,9 @@ export default function App() {
 
     // 学生说的话（第一步没有学生发言）
     if (step.student) {
-      s = recordStudentTurn(s, step.student)
+      // 与真实模式一致：回放也走规则层分类，保证演示与真实行为同构
+      const cls = classifyAnswer(step.student, getPack(s))
+      s = recordStudentTurn(s, step.student, cls.kind)
       s = {
         ...s,
         gaps: mergeGaps(s, step.gaps),
@@ -293,7 +366,19 @@ export default function App() {
       if (step.closes.length) s = { ...s, gaps: closeGaps(s, step.closes) }
     }
 
-    s = recordAiTurn(s, step.ai, step.level ?? 1, step.phase)
+    // 提问动作同样由规则层推导，让复盘统计在演示里也有内容
+    const pack = getPack(s)
+    const priorStudent = [...s.history].reverse().find((h) => h.role === 'student')
+    const demoCls = classifyAnswer(priorStudent?.text ?? '', pack)
+    const demoPlan = decideMove(demoCls, pack, {
+      level: s.level,
+      consecutiveUnknown: s.consecutiveStuck,
+      askedMoves: s.usedMoves,
+    })
+
+    s = recordAiTurn(s, step.ai, step.level ?? 1, step.phase, {
+      move: step.phase === 'socratic' ? demoPlan.move : undefined,
+    })
     setSession(s)
     if (step.phase === 'done') {
       setDemoPlaying(false)
@@ -319,7 +404,8 @@ export default function App() {
     if (!step) return
     let s = session
     if (step.student) {
-      s = recordStudentTurn(s, step.student)
+      const cls = classifyAnswer(step.student, getPack(s))
+      s = recordStudentTurn(s, step.student, cls.kind)
       s = { ...s, gaps: mergeGaps(s, step.gaps), understoodLevel: step.understood }
       if (step.closes.length) s = { ...s, gaps: closeGaps(s, step.closes) }
     }
@@ -544,13 +630,22 @@ export default function App() {
             </div>
           </div>
 
-          <button
-            className="btn-ghost w-full text-sm"
-            onClick={() => setShowPassport(true)}
-            disabled={session.history.length === 0}
-          >
-            🎓 生成学习护照
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              className="btn-ghost text-sm"
+              onClick={() => setShowPassport(true)}
+              disabled={session.history.length === 0}
+            >
+              🎓 学习护照
+            </button>
+            <button
+              className="btn-ghost text-sm"
+              onClick={() => setShowReview(true)}
+              disabled={session.history.length === 0}
+            >
+              🔍 教学复盘
+            </button>
+          </div>
         </section>
       </main>
 
@@ -561,6 +656,10 @@ export default function App() {
           gaps={session.gaps}
           onClose={() => setShowPassport(false)}
         />
+      )}
+
+      {showReview && (
+        <Review session={session} onClose={() => setShowReview(false)} />
       )}
 
       {showSettings && (
@@ -583,6 +682,30 @@ export default function App() {
 
 // ---------------------------------------------------------------- helpers
 
+/** 提问动作 → 中文标签（让评委一眼看出这一步用的是苏格拉底哪种刀法） */
+const MOVE_LABEL: Record<string, string> = {
+  clarify: '澄清',
+  example: '举例',
+  counterexample: '反例',
+  why: '追问理由',
+  consequence: '追问后果',
+  transfer: '换情境',
+  summarize: '归纳',
+  simplify: '降阶重问',
+}
+
+/** 学生回答分类 → 中文标签 */
+const KIND_LABEL: Record<string, string> = {
+  unknown: '说不会',
+  recite: '背规则',
+  jargon: '用术语',
+  misconception: '典型错法',
+  partial: '说到一半',
+  complete: '说全了',
+  offtopic: '跑题',
+  vague: '太笼统',
+}
+
 function Bubble({ turn }: { turn: Turn }) {
   const isAi = turn.role === 'ai'
   return (
@@ -594,14 +717,41 @@ function Bubble({ turn }: { turn: Turn }) {
             : 'bg-kid-blue text-white rounded-br-lg'
         }`}
       >
-        <div className="flex items-center gap-1.5 mb-1">
+        <div className="flex items-center gap-1.5 mb-1 flex-wrap">
           <span className="text-[11px] opacity-70">{isAi ? '❓ 小问号' : '🧒 我'}</span>
+
+          {/* AI 侧：台阶 + 提问动作 */}
           {isAi && turn.level && turn.phase === 'socratic' && (
             <span className="text-[10px] px-1.5 rounded-full bg-white/70 text-kid-primary">L{turn.level}</span>
           )}
+          {isAi && turn.move && (
+            <span className="text-[10px] px-1.5 rounded-full bg-white/70 text-[#8A5A2B]">
+              {MOVE_LABEL[turn.move] ?? turn.move}
+            </span>
+          )}
+
+          {/* 学生侧：回答类型 */}
+          {!isAi && turn.kind && (
+            <span className="text-[10px] px-1.5 rounded-full bg-white/25 text-white">
+              {KIND_LABEL[turn.kind] ?? turn.kind}
+            </span>
+          )}
+
+          {/* 护栏告警 */}
           {isAi && turn.audit && !turn.audit.passed && (
             <span className="text-[10px] px-1.5 rounded-full bg-[#FFEAEF] text-[#C2185B]">
               {turn.audit.label}
+            </span>
+          )}
+
+          {/* 费曼得分 */}
+          {isAi && turn.feynman && (
+            <span
+              className={`text-[10px] px-1.5 rounded-full ${
+                turn.feynman.passed ? 'bg-kid-green text-white' : 'bg-[#FFF6DF] text-[#B8860B]'
+              }`}
+            >
+              费曼 {turn.feynman.total} 分
             </span>
           )}
         </div>

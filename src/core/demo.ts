@@ -48,7 +48,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
     blurb: '看起来会做，一问"为什么"就说不清 —— 典型的假性掌握',
     steps: [
       {
-        ai: '你玩过那种带格子的收纳盒吗？如果我把一个苹果放进去，我怎么才能一眼找到它？',
+        ai: '你玩过那种带格子的收纳盒吗？',
         level: 1,
         student: '在上面贴个标签写"苹果"。',
         understood: 0.25,
@@ -65,7 +65,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: '学生用"内存"这个自己也没解释过的词 —— 术语依赖缺口暴露',
       },
       {
-        ai: '你说到"内存"这个词。你能不能用你自己的话说说，它到底是个什么东西？',
+        ai: '你说的"内存"，是什么意思呀？',
         level: 2,
         target: 'jargon',
         student: '就是……电脑里面放东西的地方吧。',
@@ -75,7 +75,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L2 概念澄清：逼他把术语翻译成自己的话，结果含糊 —— 定义缺失',
       },
       {
-        ai: '好，那我们打个比方：内存就像一排贴了名字的小盒子。我把 5 放进叫 a 的盒子，再把 3 放进去，现在 a 里面是几？',
+        ai: '我把 5 放进叫 a 的盒子里。你怎么知道 a 里放的是 5？',
         level: 4,
         target: 'def',
         student: '是 8！因为 5 加 3 等于 8。',
@@ -85,7 +85,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L4 类比迁移：经典误区浮出水面 —— 他把"放进去"当成了"加上去"',
       },
       {
-        ai: '有意思。那我们再试一次：盒子里先放着 5，我现在"放进去"一个 3 —— 注意，是放进去，不是倒进去。你觉得盒子会变成什么样？',
+        ai: '盒子里先放着 5，我现在把 3 放进去。你觉得盒子里会变成什么样？',
         level: 5,
         target: 'mech',
         student: '哦……那应该是 3 吧？因为新的把旧的挤掉了。',
@@ -95,7 +95,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L5 追问原因：只给"放进去"这个动作线索，他自己想通了覆盖机制 —— 缺口闭合',
       },
       {
-        ai: '你说对了！那我考考你：两个盒子能都叫同一个名字吗？为什么？',
+        ai: '如果两个盒子上写一样的名字，会出什么问题？',
         level: 5,
         student: '不能，因为叫同一个名字就分不清哪个是哪个了。',
         understood: 0.82,
@@ -161,7 +161,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L3 举例：把"为什么"换成一个能算出来的具体问题',
       },
       {
-        ai: '对，正好一百万次。那如果每一位可以是数字也可以是字母，猜的次数会变多还是变少？',
+        ai: '对，正好一百万次。那如果每一位还能填字母呢？',
         level: 5,
         student: '变多！因为每一位能选的东西变多了。',
         understood: 0.78,
@@ -170,7 +170,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: '他自己说出了"选择变多"这个机制 —— 缺口闭合',
       },
       {
-        ai: '那我再加一句：密码里加上你的生日，会更安全还是更不安全？',
+        ai: '那我再加一句：如果我把生日也加进密码里，会怎么样？',
         level: 3,
         target: 'edge',
         student: '更安全吧，因为更长了……',
@@ -180,7 +180,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: '反向追问暴露新缺口：只知道"长就好"，不知道规则什么时候失灵 —— 边界模糊',
       },
       {
-        ai: '可是你的生日，是不是随便一个同学都知道？那这个"更长"的密码，对谁来说其实更好猜？',
+        ai: '你的生日，你同桌知道吗？',
         level: 5,
         target: 'edge',
         student: '对认识我的人来说更好猜！因为大家都知我生日。',
@@ -241,7 +241,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L4 类比迁移：用开关这种"只有两态"的东西做桥',
       },
       {
-        ai: '对！那如果电脑里面有好多好多这样的小开关，每个只有"开"和"关"，我们把"关"记作 0、"开"记作 1 —— 现在你觉得，为什么是 0 和 1 了？',
+        ai: '那如果电脑里有好多好多这样的小开关，你怎么用它们来记数字？',
         level: 4,
         target: 'causal',
         student: '因为开关只有两种状态，所以只能记两个数！',
@@ -292,7 +292,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L1 唤起经验：从真实任务切入，不提"循环"',
       },
       {
-        ai: '如果一次一份，一共要发多少遍？这样做累不累？',
+        ai: '如果一次一份，一共要发多少遍？',
         level: 2,
         target: 'def',
         student: '100 遍，很累。',
@@ -302,7 +302,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: '他知道"要重复"，但把"重复"直接等同于"循环" —— 机制不清',
       },
       {
-        ai: '那如果本子堆成一大摞，你怎么知道自己发到第几份了？想过要个记号吗？',
+        ai: '本子堆成一大摞，发着发着，你怎么知道自己发到哪了？',
         level: 4,
         target: 'mech',
         student: '在心里数啊，数到 100 就停。',
@@ -311,7 +311,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L4 类比迁移：他自己摸到了"计数器"这个概念',
       },
       {
-        ai: '对，「数到 100 就停」这句话里，藏着一个很关键的东西：什么情况下你会停下来？',
+        ai: '「数到 100 就停」—— 那你是在什么时候停下来的？',
         level: 5,
         target: 'mech',
         student: '数到 100 的时候停。',
@@ -363,7 +363,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
     blurb: '以为 AI 像人一样"看懂"，其实它只是在找规律',
     steps: [
       {
-        ai: '你见过手机拍照能认出"这是猫"吗？你觉得它是怎么认出来的？',
+        ai: '你见过手机拍照能认出"这是猫"吗？',
         level: 1,
         student: '它看到猫的样子，就认出来了。',
         gaps: [{ type: 'def', evidence: '它看到猫的样子，就认出来了', confidence: 0.7 }],
@@ -372,7 +372,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: '把 AI 拟人化了 —— 定义缺失',
       },
       {
-        ai: '你说"看到"。那手机有眼睛吗？如果没有眼睛，它拿到的是什么？',
+        ai: '你说"看到"。那手机有眼睛吗？',
         level: 5,
         target: 'def',
         student: '没有眼睛……它拿到的是照片，照片是一堆数字？',
@@ -381,7 +381,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L5 追问原因：从"看"逼到"数字"',
       },
       {
-        ai: '对，一堆数字。那我们做个实验：我给你看 10 张猫的照片，你找出它们的共同点。你会找什么？',
+        ai: '对，一堆数字。那我们做个实验：我给你看 10 张猫的照片。你会拿它们怎么办？',
         level: 4,
         target: 'mech',
         student: '都有耳朵、胡须、毛。',
@@ -390,7 +390,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: 'L4 类比迁移：让他体会"找共同点"这件事',
       },
       {
-        ai: '那 AI 也是这么干的：它看了几万张猫的照片，自己总结出一些"数字上的共同点"。现在你觉得，它是在"看懂猫"，还是在做别的事？',
+        ai: 'AI 看了几万张猫的照片之后，它在做什么？',
         level: 5,
         target: 'mech',
         student: '它是在找规律！不是真的看懂。',
@@ -400,7 +400,7 @@ export const DEMO_SCRIPTS: DemoScript[] = [
         note: '他自己区分了"看懂"与"找规律" —— 核心缺口闭合',
       },
       {
-        ai: '那我再考考你：如果一只猫躲在黑屋子里，照片很暗，AI 还能认出来吗？为什么？',
+        ai: '如果一只猫躲在黑屋子里、照片很暗，AI 还能认出来吗？',
         level: 3,
         target: 'edge',
         student: '可能认不出来，因为它没见过这么暗的猫。',

@@ -113,22 +113,65 @@ export default function GapMap({
 }) {
   return (
     <div className="space-y-4">
-      {/* 三个硬指标 */}
+      {/* 五个硬指标 */}
       <div className="grid grid-cols-3 gap-2">
-        <Metric label="答问比" value={String(profile.qaRatio)} hint="越大越好 · 目标≥3" tone="blue" />
+        <Metric label="答问比" value={String(profile.qaRatio)} hint="目标≥3" tone="blue" />
         <Metric
           label="泄露率"
           value={`${profile.leakRate}%`}
-          hint="越低越好 · 目标≤5%"
+          hint="目标≤5%"
           tone={profile.leakRate <= 5 ? 'green' : 'warn'}
+        />
+        <Metric
+          label="诱导率"
+          value={`${profile.leadingRate}%`}
+          hint="目标≤10%"
+          tone={profile.leadingRate <= 10 ? 'green' : 'warn'}
+        />
+        <Metric
+          label="一问一题"
+          value={`${profile.singleQuestionRate}%`}
+          hint="目标≥95%"
+          tone={profile.singleQuestionRate >= 95 ? 'green' : 'yellow'}
         />
         <Metric
           label="闭合率"
           value={`${profile.closureRate}%`}
-          hint="越高越好 · 目标≥60%"
+          hint="目标≥60%"
           tone={profile.closureRate >= 60 ? 'green' : 'yellow'}
         />
+        <Metric
+          label="护栏通过"
+          value={`${profile.passRate}%`}
+          hint="AI 是否守规矩"
+          tone={profile.passRate >= 95 ? 'green' : 'yellow'}
+        />
       </div>
+
+      {/* 费曼评分 */}
+      {profile.feynmanScores.length > 0 && (
+        <div className="card p-4">
+          <div className="text-sm font-bold mb-2">🎤 费曼讲解评分</div>
+          <div className="flex items-end gap-2 mb-1">
+            {profile.feynmanScores.map((s, i) => (
+              <div key={i} className="flex-1">
+                <div className="h-1.5 rounded-full bg-kid-bg overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${s >= 70 ? 'bg-kid-green' : 'bg-kid-primary'}`}
+                    style={{ width: `${Math.min(100, s)}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-kid-mute text-center mt-1">
+                  第{i + 1}次 {s}分
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[11px] text-kid-mute">
+            讲不清就回去重讲 —— 这就是费曼学习法的第三、四步。
+          </div>
+        </div>
+      )}
 
       <div className="card p-4">
         <div className="text-sm font-bold mb-1">🧠 认知缺口图谱</div>
