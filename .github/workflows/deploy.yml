@@ -35,6 +35,10 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # 单页应用刷新 404 兜底
+      - name: SPA fallback
+        run: cp dist/index.html dist/404.html
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
